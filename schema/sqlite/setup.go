@@ -26,14 +26,19 @@ package sqlite
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"fmt"
 	"io"
 
+	"go.temporal.io/api/enums/v1"
+	"go.temporal.io/server/api/persistence/v1"
 	"go.temporal.io/server/common/config"
 	p "go.temporal.io/server/common/persistence"
+	"go.temporal.io/server/common/persistence/serialization"
 	"go.temporal.io/server/common/persistence/sql"
 	"go.temporal.io/server/common/persistence/sql/sqlplugin"
+	"go.temporal.io/server/common/primitives"
 	"go.temporal.io/server/common/resolver"
 )
 
@@ -71,6 +76,60 @@ func SetupSchema(cfg *config.SQL) error {
 		if err = db.Exec(stmt); err != nil {
 			return fmt.Errorf("error executing statement %q: %w", stmt, err)
 		}
+	}
+
+	return nil
+}
+
+func CreateNamespaces(cfg *config.SQL, namespaces ...string) error {
+	db, err := sql.NewSQLDB(sqlplugin.DbKindUnknown, cfg, resolver.NewNoopResolver())
+	if err != nil {
+		return fmt.Errorf("unable to create SQLite admin DB: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	for _, ns := range namespaces {
+		if err := createNamespaceIfNotExists(db, ns); err != nil {
+			return fmt.Errorf("error creating namespace %q: %w", ns, err)
+		}
+	}
+
+	return nil
+}
+
+func createNamespaceIfNotExists(db sqlplugin.DB, namespace string) error {
+	// Return early if namespace already exists
+	rows, err := db.SelectFromNamespace(context.Background(), sqlplugin.NamespaceFilter{
+		Name: &namespace,
+	})
+	if err == nil && len(rows) > 0 {
+		return nil
+	}
+
+	nsID := primitives.NewUUID()
+
+	d, err := serialization.NewSerializer().NamespaceDetailToBlob(&persistence.NamespaceDetail{
+		Info: &persistence.NamespaceInfo{
+			Id:    nsID.String(),
+			State: enums.NAMESPACE_STATE_REGISTERED,
+			Name:  namespace,
+		},
+		Config:            &persistence.NamespaceConfig{},
+		ReplicationConfig: &persistence.NamespaceReplicationConfig{},
+	}, enums.ENCODING_TYPE_PROTO3)
+	if err != nil {
+		return err
+	}
+
+	if _, err := db.InsertIntoNamespace(context.Background(), &sqlplugin.NamespaceRow{
+		ID:                  nsID,
+		Name:                namespace,
+		Data:                d.GetData(),
+		DataEncoding:        d.GetEncodingType().String(),
+		IsGlobal:            false,
+		NotificationVersion: 0,
+	}); err != nil {
+		return err
 	}
 
 	return nil
