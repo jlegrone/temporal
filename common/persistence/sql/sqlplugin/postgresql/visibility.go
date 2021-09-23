@@ -37,8 +37,8 @@ import (
 const (
 	templateCreateWorkflowExecutionStarted = `INSERT INTO executions_visibility (` +
 		`namespace_id, workflow_id, run_id, start_time, execution_time, workflow_type_name, status, memo, encoding) ` +
-		`VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (namespace_id, run_id) DO NOTHING`
+		`VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)` +
+		`ON CONFLICT (namespace_id, run_id) DO NOTHING`
 
 	templateCreateWorkflowExecutionClosed = `INSERT INTO executions_visibility (` +
 		`namespace_id, workflow_id, run_id, start_time, execution_time, workflow_type_name, close_time, status, history_length, memo, encoding) ` +

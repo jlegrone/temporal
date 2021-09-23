@@ -89,7 +89,7 @@ workflow_id = $3 AND
 run_id = $4
 `
 
-	createSignalsRequestedSetQuery = `INSERT INTO signals_requested_sets
+	replaceSignalsRequestedSetQuery = `INSERT INTO signals_requested_sets
 (shard_id, namespace_id, workflow_id, run_id, signal_id) VALUES
 (:shard_id, :namespace_id, :workflow_id, :run_id, :signal_id)
 ON CONFLICT (shard_id, namespace_id, workflow_id, run_id, signal_id) DO NOTHING`
@@ -578,13 +578,13 @@ func (pdb *db) DeleteAllFromSignalInfoMaps(
 	)
 }
 
-// InsertIntoSignalsRequestedSets inserts one or more rows into signals_requested_sets table
+// ReplaceIntoSignalsRequestedSets inserts one or more rows into signals_requested_sets table
 func (pdb *db) ReplaceIntoSignalsRequestedSets(
 	ctx context.Context,
 	rows []sqlplugin.SignalsRequestedSetsRow,
 ) (sql.Result, error) {
 	return pdb.conn.NamedExecContext(ctx,
-		createSignalsRequestedSetQuery,
+		replaceSignalsRequestedSetQuery,
 		rows,
 	)
 }

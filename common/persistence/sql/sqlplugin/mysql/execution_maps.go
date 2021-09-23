@@ -554,10 +554,9 @@ workflow_id = ? AND
 run_id = ?
 `
 
-	createSignalsRequestedSetQry = `INSERT INTO signals_requested_sets
+	replaceSignalsRequestedSetQry = `REPLACE INTO signals_requested_sets
 (shard_id, namespace_id, workflow_id, run_id, signal_id) VALUES
-(:shard_id, :namespace_id, :workflow_id, :run_id, :signal_id)
-ON DUPLICATE KEY UPDATE signal_id = VALUES (signal_id)`
+(:shard_id, :namespace_id, :workflow_id, :run_id, :signal_id)`
 
 	deleteSignalsRequestedSetQry = `DELETE FROM signals_requested_sets
 WHERE 
@@ -574,13 +573,13 @@ workflow_id = ? AND
 run_id = ?`
 )
 
-// InsertIntoSignalsRequestedSets inserts one or more rows into signals_requested_sets table
+// ReplaceIntoSignalsRequestedSets inserts one or more rows into signals_requested_sets table
 func (mdb *db) ReplaceIntoSignalsRequestedSets(
 	ctx context.Context,
 	rows []sqlplugin.SignalsRequestedSetsRow,
 ) (sql.Result, error) {
 	return mdb.conn.NamedExecContext(ctx,
-		createSignalsRequestedSetQry,
+		replaceSignalsRequestedSetQry,
 		rows,
 	)
 

@@ -92,7 +92,10 @@ func (p *plugin) CreateAdminDB(
 // underlying SQL database. The returned object is to tied to a single
 // SQL database and the object can be used to perform CRUD operations on
 // the tables in the database
-func (p *plugin) createDBConnection(cfg *config.SQL, r resolver.ServiceResolver) (*sqlx.DB, error) {
+func (p *plugin) createDBConnection(
+	cfg *config.SQL,
+	r resolver.ServiceResolver,
+) (*sqlx.DB, error) {
 	err := registerTLSConfig(cfg)
 	if err != nil {
 		return nil, err

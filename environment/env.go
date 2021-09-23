@@ -48,6 +48,13 @@ const (
 	// MySQLDefaultPort MySQL default port
 	MySQLDefaultPort = 3306
 
+	// PostgresSeeds env
+	PostgresSeeds = "POSTGRES_SEEDS"
+	// PostgresPort env
+	PostgresPort = "POSTGRES_PORT"
+	// PostgresDefaultPort PostgreSQL default port
+	PostgresDefaultPort = 5432
+
 	// ESSeeds env
 	ESSeeds = "ES_SEEDS"
 	// ESPort env
@@ -58,13 +65,6 @@ const (
 	ESVersion = "ES_VERSION"
 	// ESDefaultVersion is the default version
 	ESDefaultVersion = "v7"
-
-	// PostgresSeeds env
-	PostgresSeeds = "POSTGRES_SEEDS"
-	// PostgresPort env
-	PostgresPort = "POSTGRES_PORT"
-	// PostgresDefaultPort Postgres default port
-	PostgresDefaultPort = 5432
 )
 
 // SetupEnv setup the necessary env
@@ -155,7 +155,7 @@ func GetCassandraPort() int {
 	return p
 }
 
-// GetMySQLAddress return the cassandra address
+// GetMySQLAddress return the MySQL address
 func GetMySQLAddress() string {
 	addr := os.Getenv(MySQLSeeds)
 	if addr == "" {
@@ -177,7 +177,7 @@ func GetMySQLPort() int {
 	return p
 }
 
-// GetPostgreSQLAddress return the cassandra address
+// GetPostgreSQLAddress return the PostgreSQL address
 func GetPostgreSQLAddress() string {
 	addr := os.Getenv(PostgresSeeds)
 	if addr == "" {
@@ -186,7 +186,7 @@ func GetPostgreSQLAddress() string {
 	return addr
 }
 
-// GetPostgreSQLPort return the Postgres port
+// GetPostgreSQLPort return the PostgreSQL port
 func GetPostgreSQLPort() int {
 	port := os.Getenv(PostgresPort)
 	if port == "" {
