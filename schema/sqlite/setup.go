@@ -22,58 +22,56 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-package persistence
+package sqlite
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"os"
-	"strings"
+
+	"go.temporal.io/server/common/config"
+	p "go.temporal.io/server/common/persistence"
+	"go.temporal.io/server/common/persistence/sql"
+	"go.temporal.io/server/common/persistence/sql/sqlplugin"
+	"go.temporal.io/server/common/resolver"
 )
 
-const (
-	queryDelimiter        = ";"
-	querySliceDefaultSize = 100
+var (
+	//go:embed v3/temporal/schema.sql
+	executionSchema []byte
+	//go:embed v3/visibility/schema.sql
+	visibilitySchema []byte
 )
 
-// LoadAndSplitQuery loads and split cql / sql query into one statement per string
-func LoadAndSplitQuery(
-	filePaths []string,
-) ([]string, error) {
-	var files []io.Reader
+func SetupSchema(cfg *config.SQL) error {
+	db, err := sql.NewSQLAdminDB(sqlplugin.DbKindUnknown, cfg, resolver.NewNoopResolver())
+	if err != nil {
+		return fmt.Errorf("unable to create SQLite admin DB: %w", err)
+	}
+	defer func() { _ = db.Close() }()
 
-	for _, filePath := range filePaths {
-		f, err := os.Open(filePath)
-		if err != nil {
-			return nil, fmt.Errorf("error opening file %s: %w", filePath, err)
-		}
-		files = append(files, f)
+	statements, err := p.LoadAndSplitQueryFromReaders([]io.Reader{bytes.NewBuffer(executionSchema)})
+	if err != nil {
+		return fmt.Errorf("error loading execution schema: %w", err)
 	}
 
-	return LoadAndSplitQueryFromReaders(files)
-}
-
-// LoadAndSplitQueryFromReaders loads and split cql / sql query into one statement per string
-func LoadAndSplitQueryFromReaders(
-	readers []io.Reader,
-) ([]string, error) {
-
-	result := make([]string, 0, querySliceDefaultSize)
-
-	for _, r := range readers {
-		content, err := ioutil.ReadAll(r)
-		if err != nil {
-			return nil, fmt.Errorf("error reading contents: %w", err)
+	for _, stmt := range statements {
+		if err = db.Exec(stmt); err != nil {
+			panic(err)
 		}
-		for _, stmt := range strings.Split(string(content), queryDelimiter) {
-			stmt = strings.TrimSpace(stmt)
-			if stmt == "" {
-				continue
-			}
-			result = append(result, stmt)
-		}
-
 	}
-	return result, nil
+
+	statements, err = p.LoadAndSplitQueryFromReaders([]io.Reader{bytes.NewBuffer(visibilitySchema)})
+	if err != nil {
+		return fmt.Errorf("error loading visibility schema: %w", err)
+	}
+
+	for _, stmt := range statements {
+		if err = db.Exec(stmt); err != nil {
+			return fmt.Errorf("error executing statement %q: %w", stmt, err)
+		}
+	}
+
+	return nil
 }

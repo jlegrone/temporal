@@ -27,7 +27,6 @@
 package sqlite
 
 import (
-	_ "embed"
 	"fmt"
 	"net/url"
 	"strings"
@@ -82,7 +81,7 @@ func (p *plugin) CreateAdminDB(
 	return db, nil
 }
 
-// CreateDBConnection creates a returns a reference to a logical connection to the
+// createDBConnection creates a returns a reference to a logical connection to the
 // underlying SQL database. The returned object is to tied to a single
 // SQL database and the object can be used to perform CRUD operations on
 // the tables in the database
@@ -90,7 +89,7 @@ func (p *plugin) createDBConnection(
 	cfg *config.SQL,
 	_ resolver.ServiceResolver,
 ) (*sqlx.DB, error) {
-	db, err := sqlx.Connect(PluginName, buildDSN(cfg))
+	db, err := sqlx.Connect(goSqlDriverName, buildDSN(cfg))
 	if err != nil {
 		return nil, err
 	}
@@ -143,24 +142,3 @@ func buildDSNAttr(cfg *config.SQL) url.Values {
 	}
 	return parameters
 }
-
-//
-//func (p *plugin) verifyAndOverrideMode(
-//	mode string,
-//) (string, error) {
-//	runeMap := map[rune]struct{}{}
-//	for _, runeValue := range mode {
-//		runeMap[runeValue] = struct{}{}
-//	}
-//
-//	// allow read & write, but not create
-//	runeMap['r'] = struct{}{}
-//	runeMap['w'] = struct{}{}
-//	delete(runeMap, 'c')
-//
-//	runeSlice := make([]rune, 0, len(runeMap))
-//	for runeValue := range runeMap {
-//		runeSlice = append(runeSlice, runeValue)
-//	}
-//	return string(runeSlice), nil
-//}
