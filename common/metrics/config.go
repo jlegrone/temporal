@@ -29,7 +29,7 @@ import (
 	"time"
 
 	"github.com/cactus/go-statsd-client/statsd"
-	prom "github.com/m3db/prometheus_client_golang/prometheus"
+	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber-go/tally/v4/m3"
 	"github.com/uber-go/tally/v4/prometheus"
