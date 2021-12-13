@@ -41,7 +41,7 @@ require (
 	go.opentelemetry.io/otel v0.15.0
 	go.opentelemetry.io/otel/exporters/metric/prometheus v0.15.0
 	go.temporal.io/api v1.5.1-0.20211018190919-a5f4a169cd08
-	go.temporal.io/sdk v1.10.0
+	go.temporal.io/sdk v1.12.0
 	go.temporal.io/version v0.0.0-20201015012359-4d3bb966d193
 	go.uber.org/atomic v1.9.0
 	go.uber.org/fx v1.14.2
@@ -103,8 +103,10 @@ require (
 	github.com/stretchr/objx v0.3.0 // indirect
 	github.com/twmb/murmur3 v1.1.6 // indirect
 	github.com/uber-common/bark v1.3.0 // indirect
+	github.com/uber-go/tally/v4 v4.1.1 // indirect
 	go.opencensus.io v0.23.0 // indirect
 	go.opentelemetry.io/otel/sdk v0.15.0 // indirect
+	go.temporal.io/sdk/contrib/tally v0.1.0 // indirect
 	go.uber.org/dig v1.13.0 // indirect
 	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9 // indirect
 	golang.org/x/net v0.0.0-20211015210444-4f30a5c0130f // indirect

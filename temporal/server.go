@@ -31,8 +31,10 @@ import (
 	"time"
 
 	"github.com/pborman/uuid"
-	"github.com/uber-go/tally"
+	"github.com/uber-go/tally/v4"
+
 	sdkclient "go.temporal.io/sdk/client"
+	tallyContrib "go.temporal.io/sdk/contrib/tally"
 	"go.uber.org/fx"
 
 	persistencespb "go.temporal.io/server/api/persistence/v1"
@@ -403,10 +405,10 @@ func (s *Server) newBootstrapParams(
 	}
 
 	params.SdkClient, err = sdkclient.NewClient(sdkclient.Options{
-		HostPort:     s.so.config.PublicClient.HostPort,
-		Namespace:    common.SystemLocalNamespace,
-		MetricsScope: globalTallyScope,
-		Logger:       log.NewSdkLogger(s.logger),
+		HostPort:       s.so.config.PublicClient.HostPort,
+		Namespace:      common.SystemLocalNamespace,
+		MetricsHandler: tallyContrib.NewMetricsHandler(globalTallyScope),
+		Logger:         log.NewSdkLogger(s.logger),
 		ConnectionOptions: sdkclient.ConnectionOptions{
 			TLS:                options,
 			DisableHealthCheck: true,
