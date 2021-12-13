@@ -33,7 +33,7 @@ require (
 	github.com/robfig/cron v1.2.0
 	github.com/stretchr/testify v1.7.0
 	github.com/temporalio/ringpop-go v0.0.0-20210913194348-a2bfad448548
-	github.com/uber-go/tally v3.4.2+incompatible
+	github.com/uber-go/tally v3.4.3+incompatible
 	github.com/uber/tchannel-go v1.22.0
 	github.com/urfave/cli v1.22.5
 	github.com/urfave/cli/v2 v2.3.0

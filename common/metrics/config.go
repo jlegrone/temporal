@@ -31,9 +31,10 @@ import (
 	"github.com/cactus/go-statsd-client/statsd"
 	prom "github.com/m3db/prometheus_client_golang/prometheus"
 	"github.com/uber-go/tally/v4"
-	"github.com/uber-go/tally/m3"
-	"github.com/uber-go/tally/prometheus"
-	tallystatsdreporter "github.com/uber-go/tally/statsd"
+	"github.com/uber-go/tally/v4/m3"
+	"github.com/uber-go/tally/v4/prometheus"
+	tallystatsdreporter "github.com/uber-go/tally/v4/statsd"
+
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
 	statsdreporter "go.temporal.io/server/common/metrics/tally/statsd"
