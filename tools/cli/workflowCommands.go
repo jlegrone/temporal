@@ -52,6 +52,7 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	sdkclient "go.temporal.io/sdk/client"
+
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/backoff"
 
@@ -1439,18 +1440,18 @@ func ResetWorkflow(c *cli.Context) {
 	ctx, cancel := newContext(c)
 	defer cancel()
 
-	frontendClient := cFactory.FrontendClient(c)
+	sdkClient := getSDKClient(c)
 
 	resetBaseRunID := rid
 	workflowTaskFinishID := eventID
 	var err error
 	if resetType != "" {
-		resetBaseRunID, workflowTaskFinishID, err = getResetEventIDByType(ctx, c, resetType, namespace, wid, rid, frontendClient)
+		resetBaseRunID, workflowTaskFinishID, err = getResetEventIDByType(ctx, c, resetType, namespace, wid, rid, sdkClient)
 		if err != nil {
 			ErrorAndExit("getResetEventIDByType failed", err)
 		}
 	}
-	resp, err := frontendClient.ResetWorkflowExecution(ctx, &workflowservice.ResetWorkflowExecutionRequest{
+	resp, err := sdkClient.ResetWorkflowExecution(ctx, &workflowservice.ResetWorkflowExecutionRequest{
 		Namespace: namespace,
 		WorkflowExecution: &commonpb.WorkflowExecution{
 			WorkflowId: wid,
@@ -1467,7 +1468,7 @@ func ResetWorkflow(c *cli.Context) {
 	prettyPrintJSONObject(resp)
 }
 
-func processResets(c *cli.Context, namespace string, wes chan commonpb.WorkflowExecution, done chan bool, wg *sync.WaitGroup, params batchResetParamsType) {
+func processResets(c *cli.Context, namespace string, wes chan commonpb.WorkflowExecution, done chan bool, wg *sync.WaitGroup, params batchResetParamsType, client sdkclient.Client) {
 	for {
 		select {
 		case we := <-wes:
@@ -1476,7 +1477,7 @@ func processResets(c *cli.Context, namespace string, wes chan commonpb.WorkflowE
 			rid := we.GetRunId()
 			var err error
 			for i := 0; i < 3; i++ {
-				err = doReset(c, namespace, wid, rid, params)
+				err = doReset(c, namespace, wid, rid, params, client)
 				if err == nil {
 					break
 				}
@@ -1537,13 +1538,14 @@ func ResetInBatch(c *cli.Context) {
 		ErrorAndExit("Must provide input file or list query to get target workflows to reset", nil)
 	}
 
+	sdkClient := getSDKClient(c)
 	wg := &sync.WaitGroup{}
 
 	wes := make(chan commonpb.WorkflowExecution)
 	done := make(chan bool)
 	for i := 0; i < parallel; i++ {
 		wg.Add(1)
-		go processResets(c, namespace, wes, done, wg, batchResetParams)
+		go processResets(c, namespace, wes, done, wg, batchResetParams, sdkClient)
 	}
 
 	// read exclude
@@ -1614,7 +1616,6 @@ func ResetInBatch(c *cli.Context) {
 			}
 		}
 	} else {
-		sdkClient := getSDKClient(c)
 		pageSize := 1000
 		var nextPageToken []byte
 		var result []*workflowpb.WorkflowExecutionInfo
@@ -1651,19 +1652,15 @@ func printErrorAndReturn(msg string, err error) error {
 	return err
 }
 
-func doReset(c *cli.Context, namespace, wid, rid string, params batchResetParamsType) error {
+func doReset(c *cli.Context, namespace, wid, rid string, params batchResetParamsType, client sdkclient.Client) error {
 	ctx, cancel := newContext(c)
 	defer cancel()
 
-	frontendClient := cFactory.FrontendClient(c)
-	resp, err := frontendClient.DescribeWorkflowExecution(ctx, &workflowservice.DescribeWorkflowExecutionRequest{
-		Namespace: namespace,
-		Execution: &commonpb.WorkflowExecution{
-			WorkflowId: wid,
-		},
-	})
+	resp, err := client.DescribeWorkflowExecution(ctx, wid, rid)
 	if err != nil {
-		return printErrorAndReturn("DescribeWorkflowExecution failed", err)
+		return printErrorAndReturn("DescribeWorkflowExecution failed in doReset", err)
+	} else {
+		fmt.Println("DescribeWorkflowExecution succeeded in doReset")
 	}
 
 	currentRunID := resp.WorkflowExecutionInfo.Execution.GetRunId()
@@ -1684,7 +1681,7 @@ func doReset(c *cli.Context, namespace, wid, rid string, params batchResetParams
 	}
 
 	if params.nonDeterministicOnly {
-		isLDN, err := isLastEventWorkflowTaskFailedWithNonDeterminism(ctx, namespace, wid, rid, frontendClient)
+		isLDN, err := isLastEventWorkflowTaskFailedWithNonDeterminism(ctx, namespace, wid, rid, client)
 		if err != nil {
 			return printErrorAndReturn("check isLastEventWorkflowTaskFailedWithNonDeterminism failed", err)
 		}
@@ -1694,7 +1691,7 @@ func doReset(c *cli.Context, namespace, wid, rid string, params batchResetParams
 		}
 	}
 
-	resetBaseRunID, workflowTaskFinishID, err := getResetEventIDByType(ctx, c, params.resetType, namespace, wid, rid, frontendClient)
+	resetBaseRunID, workflowTaskFinishID, err := getResetEventIDByType(ctx, c, params.resetType, namespace, wid, rid, client)
 	if err != nil {
 		return printErrorAndReturn("getResetEventIDByType failed", err)
 	}
@@ -1703,7 +1700,7 @@ func doReset(c *cli.Context, namespace, wid, rid string, params batchResetParams
 	if params.dryRun {
 		fmt.Printf("dry run to reset wid: %v, rid:%v to baseRunId:%v, eventId:%v \n", wid, rid, resetBaseRunID, workflowTaskFinishID)
 	} else {
-		resp2, err := frontendClient.ResetWorkflowExecution(ctx, &workflowservice.ResetWorkflowExecutionRequest{
+		resp2, err := client.ResetWorkflowExecution(ctx, &workflowservice.ResetWorkflowExecutionRequest{
 			Namespace: namespace,
 			WorkflowExecution: &commonpb.WorkflowExecution{
 				WorkflowId: wid,
@@ -1723,37 +1720,21 @@ func doReset(c *cli.Context, namespace, wid, rid string, params batchResetParams
 	return nil
 }
 
-func isLastEventWorkflowTaskFailedWithNonDeterminism(ctx context.Context, namespace, wid, rid string, frontendClient workflowservice.WorkflowServiceClient) (bool, error) {
-	req := &workflowservice.GetWorkflowExecutionHistoryRequest{
-		Namespace: namespace,
-		Execution: &commonpb.WorkflowExecution{
-			WorkflowId: wid,
-			RunId:      rid,
-		},
-		MaximumPageSize: 1000,
-		NextPageToken:   nil,
-	}
-
+func isLastEventWorkflowTaskFailedWithNonDeterminism(ctx context.Context, namespace, wid, rid string, frontendClient sdkclient.Client) (bool, error) {
 	var firstEvent, workflowTaskFailedEvent *historypb.HistoryEvent
-	for {
-		resp, err := frontendClient.GetWorkflowExecutionHistory(ctx, req)
+	iterator := frontendClient.GetWorkflowHistory(ctx, wid, rid, false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	for iterator.HasNext() {
+		e, err := iterator.Next()
 		if err != nil {
 			return false, printErrorAndReturn("GetWorkflowExecutionHistory failed", err)
 		}
-		for _, e := range resp.GetHistory().GetEvents() {
-			if firstEvent == nil {
-				firstEvent = e
-			}
-			if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_FAILED {
-				workflowTaskFailedEvent = e
-			} else if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_COMPLETED {
-				workflowTaskFailedEvent = nil
-			}
+		if firstEvent == nil {
+			firstEvent = e
 		}
-		if len(resp.NextPageToken) != 0 {
-			req.NextPageToken = resp.NextPageToken
-		} else {
-			break
+		if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_FAILED {
+			workflowTaskFailedEvent = e
+		} else if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_COMPLETED {
+			workflowTaskFailedEvent = nil
 		}
 	}
 
@@ -1770,7 +1751,7 @@ func isLastEventWorkflowTaskFailedWithNonDeterminism(ctx context.Context, namesp
 	return false, nil
 }
 
-func getResetEventIDByType(ctx context.Context, c *cli.Context, resetType, namespace, wid, rid string, frontendClient workflowservice.WorkflowServiceClient) (resetBaseRunID string, workflowTaskFinishID int64, err error) {
+func getResetEventIDByType(ctx context.Context, c *cli.Context, resetType, namespace, wid, rid string, frontendClient sdkclient.Client) (resetBaseRunID string, workflowTaskFinishID int64, err error) {
 	fmt.Println("resetType:", resetType)
 	switch resetType {
 	case "LastWorkflowTask":
@@ -1801,35 +1782,22 @@ func getResetEventIDByType(ctx context.Context, c *cli.Context, resetType, names
 }
 
 // Returns event id of the last completed task or id of the next event after scheduled task.
-func getLastWorkflowTaskEventID(ctx context.Context, namespace, wid, rid string, frontendClient workflowservice.WorkflowServiceClient) (resetBaseRunID string, workflowTaskEventID int64, err error) {
+func getLastWorkflowTaskEventID(ctx context.Context, namespace, wid, rid string, frontendClient sdkclient.Client) (resetBaseRunID string, workflowTaskEventID int64, err error) {
 	resetBaseRunID = rid
-	req := &workflowservice.GetWorkflowExecutionHistoryRequest{
-		Namespace: namespace,
-		Execution: &commonpb.WorkflowExecution{
-			WorkflowId: wid,
-			RunId:      rid,
-		},
-		MaximumPageSize: 1000,
-		NextPageToken:   nil,
-	}
 
-	for {
-		resp, err := frontendClient.GetWorkflowExecutionHistory(ctx, req)
+	iterator := frontendClient.GetWorkflowHistory(ctx, wid, rid, false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	for iterator.HasNext() {
+		e, err := iterator.Next()
 		if err != nil {
 			return "", 0, printErrorAndReturn("GetWorkflowExecutionHistory failed", err)
 		}
-		for _, e := range resp.GetHistory().GetEvents() {
-			if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_COMPLETED {
-				workflowTaskEventID = e.GetEventId()
-			} else if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_SCHEDULED {
-				workflowTaskEventID = e.GetEventId() + 1
-			}
+
+		if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_COMPLETED {
+			workflowTaskEventID = e.GetEventId()
+		} else if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_SCHEDULED {
+			workflowTaskEventID = e.GetEventId() + 1
 		}
-		if len(resp.NextPageToken) != 0 {
-			req.NextPageToken = resp.NextPageToken
-		} else {
-			break
-		}
+
 	}
 	if workflowTaskEventID == 0 {
 		return "", 0, printErrorAndReturn("Get LastWorkflowTaskID failed", fmt.Errorf("unable to find any scheduled or completed task"))
@@ -1846,17 +1814,11 @@ func badChecksum(bad string) func(string) error {
 	}
 }
 
-func getBadWorkflowTaskCompletedID(ctx context.Context, namespace, wid, rid, binChecksum string, frontendClient workflowservice.WorkflowServiceClient) (resetBaseRunID string, workflowTaskCompletedID int64, err error) {
+func getBadWorkflowTaskCompletedID(ctx context.Context, namespace, wid, rid, binChecksum string, frontendClient sdkclient.Client) (resetBaseRunID string, workflowTaskCompletedID int64, err error) {
 	resetBaseRunID = rid
-	resp, err := frontendClient.DescribeWorkflowExecution(ctx, &workflowservice.DescribeWorkflowExecutionRequest{
-		Namespace: namespace,
-		Execution: &commonpb.WorkflowExecution{
-			WorkflowId: wid,
-			RunId:      rid,
-		},
-	})
+	resp, err := frontendClient.DescribeWorkflowExecution(ctx, wid, rid)
 	if err != nil {
-		return "", 0, printErrorAndReturn("DescribeWorkflowExecution failed", err)
+		return "", 0, printErrorAndReturn("DescribeWorkflowExecution failed in getBadWorkflowTaskCompletedID", err)
 	}
 
 	_, p := workflow.FindAutoResetPoint(clock.NewRealTimeSource(), badChecksum(binChecksum), resp.WorkflowExecutionInfo.AutoResetPoints)
@@ -1871,91 +1833,53 @@ func getBadWorkflowTaskCompletedID(ctx context.Context, namespace, wid, rid, bin
 }
 
 // Returns id of the first workflow task completed event or if it doesn't exist then id of the event after task scheduled event.
-func getFirstWorkflowTaskEventID(ctx context.Context, namespace, wid, rid string, frontendClient workflowservice.WorkflowServiceClient) (resetBaseRunID string, workflowTaskEventID int64, err error) {
+func getFirstWorkflowTaskEventID(ctx context.Context, namespace, wid, rid string, frontendClient sdkclient.Client) (resetBaseRunID string, workflowTaskEventID int64, err error) {
 	resetBaseRunID = rid
-	req := &workflowservice.GetWorkflowExecutionHistoryRequest{
-		Namespace: namespace,
-		Execution: &commonpb.WorkflowExecution{
-			WorkflowId: wid,
-			RunId:      rid,
-		},
-		MaximumPageSize: 1000,
-		NextPageToken:   nil,
-	}
-	for {
-		resp, err := frontendClient.GetWorkflowExecutionHistory(ctx, req)
+
+	iterator := frontendClient.GetWorkflowHistory(ctx, wid, rid, false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	for iterator.HasNext() {
+		e, err := iterator.Next()
 		if err != nil {
 			return "", 0, printErrorAndReturn("GetWorkflowExecutionHistory failed", err)
 		}
-		for _, e := range resp.GetHistory().GetEvents() {
-			if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_COMPLETED {
-				workflowTaskEventID = e.GetEventId()
-				return resetBaseRunID, workflowTaskEventID, nil
-			}
-			if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_SCHEDULED {
-				if workflowTaskEventID == 0 {
-					workflowTaskEventID = e.GetEventId() + 1
-				}
-			}
+
+		if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_COMPLETED {
+			workflowTaskEventID = e.GetEventId()
+			return resetBaseRunID, workflowTaskEventID, nil
 		}
-		if len(resp.NextPageToken) != 0 {
-			req.NextPageToken = resp.NextPageToken
-		} else {
-			break
+		if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_SCHEDULED {
+			if workflowTaskEventID == 0 {
+				workflowTaskEventID = e.GetEventId() + 1
+			}
 		}
 	}
+
 	if workflowTaskEventID == 0 {
 		return "", 0, printErrorAndReturn("Get FirstWorkflowTaskID failed", fmt.Errorf("unable to find any scheduled or completed task"))
 	}
 	return
 }
 
-func getLastContinueAsNewID(ctx context.Context, namespace, wid, rid string, frontendClient workflowservice.WorkflowServiceClient) (resetBaseRunID string, workflowTaskCompletedID int64, err error) {
-	// get first event
-	req := &workflowservice.GetWorkflowExecutionHistoryRequest{
-		Namespace: namespace,
-		Execution: &commonpb.WorkflowExecution{
-			WorkflowId: wid,
-			RunId:      rid,
-		},
-		MaximumPageSize: 1,
-		NextPageToken:   nil,
-	}
-	resp, err := frontendClient.GetWorkflowExecutionHistory(ctx, req)
-	if err != nil {
-		return "", 0, printErrorAndReturn("GetWorkflowExecutionHistory failed", err)
-	}
-	firstEvent := resp.History.Events[0]
-	resetBaseRunID = firstEvent.GetWorkflowExecutionStartedEventAttributes().GetContinuedExecutionRunId()
-	if resetBaseRunID == "" {
-		return "", 0, printErrorAndReturn("GetWorkflowExecutionHistory failed", fmt.Errorf("cannot get resetBaseRunId"))
-	}
-
-	req = &workflowservice.GetWorkflowExecutionHistoryRequest{
-		Namespace: namespace,
-		Execution: &commonpb.WorkflowExecution{
-			WorkflowId: wid,
-			RunId:      resetBaseRunID,
-		},
-		MaximumPageSize: 1000,
-		NextPageToken:   nil,
-	}
-	for {
-		resp, err := frontendClient.GetWorkflowExecutionHistory(ctx, req)
+func getLastContinueAsNewID(ctx context.Context, namespace, wid, rid string, frontendClient sdkclient.Client) (resetBaseRunID string, workflowTaskCompletedID int64, err error) {
+	iterator := frontendClient.GetWorkflowHistory(ctx, wid, rid, false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	var firstEvent *historypb.HistoryEvent
+	for iterator.HasNext() {
+		e, err := iterator.Next()
 		if err != nil {
 			return "", 0, printErrorAndReturn("GetWorkflowExecutionHistory failed", err)
 		}
-		for _, e := range resp.GetHistory().GetEvents() {
-			if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_COMPLETED {
-				workflowTaskCompletedID = e.GetEventId()
+		if firstEvent == nil {
+			firstEvent = e
+			resetBaseRunID = firstEvent.GetWorkflowExecutionStartedEventAttributes().GetContinuedExecutionRunId()
+			if resetBaseRunID == "" {
+				return "", 0, printErrorAndReturn("GetWorkflowExecutionHistory failed", fmt.Errorf("cannot get resetBaseRunId"))
 			}
 		}
-		if len(resp.NextPageToken) != 0 {
-			req.NextPageToken = resp.NextPageToken
-		} else {
-			break
+		if e.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_TASK_COMPLETED {
+			workflowTaskCompletedID = e.GetEventId()
 		}
 	}
+
 	if workflowTaskCompletedID == 0 {
 		return "", 0, printErrorAndReturn("Get LastContinueAsNewID failed", fmt.Errorf("no WorkflowTaskCompletedID"))
 	}
