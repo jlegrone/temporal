@@ -1468,7 +1468,7 @@ func ResetWorkflow(c *cli.Context) {
 	prettyPrintJSONObject(resp)
 }
 
-func processResets(c *cli.Context, namespace string, wes chan commonpb.WorkflowExecution, done chan bool, wg *sync.WaitGroup, params batchResetParamsType) {
+func processResets(c *cli.Context, namespace string, wes chan commonpb.WorkflowExecution, done chan bool, wg *sync.WaitGroup, params batchResetParamsType, client sdkclient.Client) {
 	for {
 		select {
 		case we := <-wes:
@@ -1477,7 +1477,7 @@ func processResets(c *cli.Context, namespace string, wes chan commonpb.WorkflowE
 			rid := we.GetRunId()
 			var err error
 			for i := 0; i < 3; i++ {
-				err = doReset(c, namespace, wid, rid, params)
+				err = doReset(c, namespace, wid, rid, params, client)
 				if err == nil {
 					break
 				}
@@ -1538,13 +1538,14 @@ func ResetInBatch(c *cli.Context) {
 		ErrorAndExit("Must provide input file or list query to get target workflows to reset", nil)
 	}
 
+	sdkClient := getSDKClient(c)
 	wg := &sync.WaitGroup{}
 
 	wes := make(chan commonpb.WorkflowExecution)
 	done := make(chan bool)
 	for i := 0; i < parallel; i++ {
 		wg.Add(1)
-		go processResets(c, namespace, wes, done, wg, batchResetParams)
+		go processResets(c, namespace, wes, done, wg, batchResetParams, sdkClient)
 	}
 
 	// read exclude
@@ -1615,7 +1616,6 @@ func ResetInBatch(c *cli.Context) {
 			}
 		}
 	} else {
-		sdkClient := getSDKClient(c)
 		pageSize := 1000
 		var nextPageToken []byte
 		var result []*workflowpb.WorkflowExecutionInfo
@@ -1707,7 +1707,7 @@ func doReset(c *cli.Context, namespace, wid, rid string, params batchResetParams
 	if params.dryRun {
 		fmt.Printf("dry run to reset wid: %v, rid:%v to baseRunId:%v, eventId:%v \n", wid, rid, resetBaseRunID, workflowTaskFinishID)
 	} else {
-		resp2, err := sdkClient.ResetWorkflowExecution(ctx, &workflowservice.ResetWorkflowExecutionRequest{
+		resp2, err := client.ResetWorkflowExecution(ctx, &workflowservice.ResetWorkflowExecutionRequest{
 			Namespace: namespace,
 			WorkflowExecution: &commonpb.WorkflowExecution{
 				WorkflowId: wid,
