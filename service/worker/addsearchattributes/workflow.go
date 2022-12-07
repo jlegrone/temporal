@@ -33,14 +33,12 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
-	"golang.org/x/exp/maps"
 
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
 	"go.temporal.io/server/common/metrics"
 	esclient "go.temporal.io/server/common/persistence/visibility/store/elasticsearch/client"
 	"go.temporal.io/server/common/searchattribute"
-	"go.temporal.io/server/common/util"
 )
 
 const (
@@ -169,15 +167,29 @@ func (a *activities) WaitForYellowStatusActivity(ctx context.Context, indexName 
 }
 
 func (a *activities) UpdateClusterMetadataActivity(ctx context.Context, params WorkflowParams) error {
+	if params.CustomAttributesToAdd == nil {
+		return nil
+	}
+
 	oldSearchAttributes, err := a.saManager.GetSearchAttributes(params.IndexName, true)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUnableToGetSearchAttributes, err)
 	}
 
-	newCustomSearchAttributes := util.CloneMapNonNil(oldSearchAttributes.Custom())
-	maps.Copy(newCustomSearchAttributes, params.CustomAttributesToAdd)
-	err = a.saManager.SaveSearchAttributes(ctx, params.IndexName, newCustomSearchAttributes)
-	if err != nil {
+	if oldSearchAttributes.Custom() != nil {
+		for attrName, oldAttrType := range oldSearchAttributes.Custom() {
+			if newAttrType, ok := params.CustomAttributesToAdd[attrName]; ok {
+				if newAttrType != oldAttrType {
+					return fmt.Errorf("%w: search attribute %q is already registered with type %q", ErrUnableToSaveSearchAttributes, attrName, oldAttrType)
+				}
+				// The search attribute already exists and has the same type,
+				// so we can remove it from the request.
+				delete(params.CustomAttributesToAdd, attrName)
+			}
+		}
+	}
+
+	if err := a.saManager.SaveSearchAttributes(ctx, params.IndexName, params.CustomAttributesToAdd); err != nil {
 		a.logger.Info("Unable to save search attributes to cluster metadata.", tag.ESIndex(params.IndexName), tag.Error(err))
 		a.metricsHandler.Counter(metrics.AddSearchAttributesFailuresCount.GetMetricName()).Record(1)
 		return fmt.Errorf("%w: %v", ErrUnableToSaveSearchAttributes, err)
