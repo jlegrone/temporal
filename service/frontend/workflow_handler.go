@@ -1175,8 +1175,16 @@ func (wh *WorkflowHandler) RecordActivityTaskHeartbeat(ctx context.Context, requ
 		return nil, err
 	}
 
-	sizeLimitError := wh.config.BlobSizeLimitError(namespaceEntry.Name().String())
-	sizeLimitWarn := wh.config.BlobSizeLimitWarn(namespaceEntry.Name().String())
+	namespaceName := namespaceEntry.Name().String()
+
+	// request.Namespace was not a required field up to v1.19.0, so checking only
+	// for equality could break existing applications.
+	if request.GetNamespace() != "" && namespaceName != request.GetNamespace() {
+		return nil, serviceerror.NewFailedPrecondition("request namespace does not match task token")
+	}
+
+	sizeLimitError := wh.config.BlobSizeLimitError(namespaceName)
+	sizeLimitWarn := wh.config.BlobSizeLimitWarn(namespaceName)
 
 	if err := common.CheckEventBlobSizeLimit(
 		request.GetDetails().Size(),

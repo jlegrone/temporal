@@ -651,6 +651,79 @@ func (s *workflowHandlerSuite) TestStartWorkflowExecution_Failed_InvalidTaskTime
 	s.Equal(errInvalidWorkflowTaskTimeoutSeconds, err)
 }
 
+func (s *workflowHandlerSuite) TestRecordActivityTaskHeartbeat_Namespace() {
+	config := s.newConfig()
+	config.RPS = dc.GetIntPropertyFn(10)
+	wh := s.getWorkflowHandler(config)
+
+	heartbeatTask := &tokenspb.Task{
+		NamespaceId:      "abc123",
+		WorkflowId:       "foo",
+		RunId:            "bar",
+		ScheduledEventId: 1,
+		Attempt:          1,
+		ActivityId:       "",
+		WorkflowType:     "baz",
+		ActivityType:     "qux",
+		Clock:            nil,
+	}
+	heartbeatToken, err := common.NewProtoTaskTokenSerializer().Serialize(heartbeatTask)
+	if err != nil {
+		s.T().Fatal(err)
+	}
+
+	s.mockNamespaceCache.EXPECT().GetNamespaceByID(namespace.ID(heartbeatTask.GetNamespaceId())).Return(namespace.NewNamespaceForTest(
+		&persistencespb.NamespaceInfo{
+			Id:   heartbeatTask.GetNamespaceId(),
+			Name: "hello-test",
+		}, nil, false, nil, 0), nil).AnyTimes()
+
+	// This test case is included in order to maintain backwards compatibility
+	// with server versions 1.19.0 and earlier which did not check that Namespace
+	// had been set on RecordActivityTaskHeartbeatRequest.
+	s.Run("missing namespace", func() {
+		req := &workflowservice.RecordActivityTaskHeartbeatRequest{
+			// Namespace: "forget to specify",
+			TaskToken: heartbeatToken,
+			Details:   nil,
+			Identity:  "test",
+		}
+		s.mockHistoryClient.EXPECT().RecordActivityTaskHeartbeat(context.Background(), &historyservice.RecordActivityTaskHeartbeatRequest{
+			NamespaceId:      heartbeatTask.GetNamespaceId(),
+			HeartbeatRequest: req,
+		}).Return(nil, nil).AnyTimes()
+		_, heartbeatError := wh.RecordActivityTaskHeartbeat(context.Background(), req)
+		s.NoError(heartbeatError)
+	})
+
+	s.Run("matching namespace", func() {
+		req := &workflowservice.RecordActivityTaskHeartbeatRequest{
+			Namespace: "hello-test",
+			TaskToken: heartbeatToken,
+			Details:   nil,
+			Identity:  "test",
+		}
+		s.mockHistoryClient.EXPECT().RecordActivityTaskHeartbeat(context.Background(), &historyservice.RecordActivityTaskHeartbeatRequest{
+			NamespaceId:      heartbeatTask.GetNamespaceId(),
+			HeartbeatRequest: req,
+		}).Return(nil, nil).AnyTimes()
+		_, heartbeatError := wh.RecordActivityTaskHeartbeat(context.Background(), req)
+		s.NoError(heartbeatError)
+	})
+
+	s.Run("mismatched namespace", func() {
+		_, heartbeatError := wh.RecordActivityTaskHeartbeat(context.Background(), &workflowservice.RecordActivityTaskHeartbeatRequest{
+			Namespace: "some-namespace-not-in-task-token",
+			TaskToken: heartbeatToken,
+			Details:   nil,
+			Identity:  "test",
+		})
+		s.Error(heartbeatError)
+		var failedPrecondition *serviceerror.FailedPrecondition
+		s.ErrorAs(heartbeatError, &failedPrecondition)
+	})
+}
+
 func (s *workflowHandlerSuite) TestRegisterNamespace_Failure_InvalidArchivalURI() {
 	s.mockClusterMetadata.EXPECT().IsGlobalNamespaceEnabled().Return(false)
 	s.mockArchivalMetadata.EXPECT().GetHistoryConfig().Return(archiver.NewArchivalConfig("enabled", dc.GetStringPropertyFn("enabled"), dc.GetBoolPropertyFn(true), "disabled", "random URI"))
