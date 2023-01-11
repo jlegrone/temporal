@@ -940,16 +940,15 @@ func (wh *WorkflowHandler) RespondWorkflowTaskCompleted(
 		return nil, errIdentityTooLong
 	}
 
-	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
+	taskToken, namespaceEntry, err := wh.getTaskTokenAndNamespace(request)
 	if err != nil {
 		return nil, err
 	}
-	namespaceId := namespace.ID(taskToken.GetNamespaceId())
 
 	wh.overrides.DisableEagerActivityDispatchForBuggyClients(ctx, request)
 
 	histResp, err := wh.historyClient.RespondWorkflowTaskCompleted(ctx, &historyservice.RespondWorkflowTaskCompletedRequest{
-		NamespaceId:     namespaceId.String(),
+		NamespaceId:     namespaceEntry.ID().String(),
 		CompleteRequest: request},
 	)
 	if err != nil {
@@ -977,7 +976,7 @@ func (wh *WorkflowHandler) RespondWorkflowTaskCompleted(
 		}
 		matchingResp := common.CreateMatchingPollWorkflowTaskQueueResponse(histResp.StartedResponse, workflowExecution, token)
 
-		newWorkflowTask, err := wh.createPollWorkflowTaskQueueResponse(ctx, namespaceId, matchingResp, matchingResp.GetBranchToken())
+		newWorkflowTask, err := wh.createPollWorkflowTaskQueueResponse(ctx, namespaceEntry.ID(), matchingResp, matchingResp.GetBranchToken())
 		if err != nil {
 			return nil, err
 		}
@@ -1006,12 +1005,7 @@ func (wh *WorkflowHandler) RespondWorkflowTaskFailed(
 		return nil, errRequestNotSet
 	}
 
-	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
-	if err != nil {
-		return nil, err
-	}
-	namespaceId := namespace.ID(taskToken.GetNamespaceId())
-	namespaceEntry, err := wh.namespaceRegistry.GetNamespaceByID(namespaceId)
+	taskToken, namespaceEntry, err := wh.getTaskTokenAndNamespace(request)
 	if err != nil {
 		return nil, err
 	}
@@ -1027,7 +1021,7 @@ func (wh *WorkflowHandler) RespondWorkflowTaskFailed(
 		request.GetFailure().Size(),
 		sizeLimitWarn,
 		sizeLimitError,
-		namespaceId.String(),
+		namespaceEntry.ID().String(),
 		taskToken.GetWorkflowId(),
 		taskToken.GetRunId(),
 		wh.metricsScope(ctx).WithTags(metrics.CommandTypeTag(enumspb.COMMAND_TYPE_UNSPECIFIED.String())),
@@ -1049,7 +1043,7 @@ func (wh *WorkflowHandler) RespondWorkflowTaskFailed(
 	}
 
 	_, err = wh.historyClient.RespondWorkflowTaskFailed(ctx, &historyservice.RespondWorkflowTaskFailedRequest{
-		NamespaceId:   namespaceId.String(),
+		NamespaceId:   namespaceEntry.ID().String(),
 		FailedRequest: request,
 	})
 	if err != nil {
@@ -1165,32 +1159,19 @@ func (wh *WorkflowHandler) RecordActivityTaskHeartbeat(ctx context.Context, requ
 	}
 
 	wh.logger.Debug("Received RecordActivityTaskHeartbeat")
-	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
-	if err != nil {
-		return nil, err
-	}
-	namespaceId := namespace.ID(taskToken.GetNamespaceId())
-	namespaceEntry, err := wh.namespaceRegistry.GetNamespaceByID(namespaceId)
+	taskToken, namespaceEntry, err := wh.getTaskTokenAndNamespace(request)
 	if err != nil {
 		return nil, err
 	}
 
-	namespaceName := namespaceEntry.Name().String()
-
-	// request.Namespace was not a required field up to v1.19.0, so checking only
-	// for equality could break existing applications.
-	if request.GetNamespace() != "" && namespaceName != request.GetNamespace() {
-		return nil, serviceerror.NewFailedPrecondition("request namespace does not match task token")
-	}
-
-	sizeLimitError := wh.config.BlobSizeLimitError(namespaceName)
-	sizeLimitWarn := wh.config.BlobSizeLimitWarn(namespaceName)
+	sizeLimitError := wh.config.BlobSizeLimitError(namespaceEntry.Name().String())
+	sizeLimitWarn := wh.config.BlobSizeLimitWarn(namespaceEntry.Name().String())
 
 	if err := common.CheckEventBlobSizeLimit(
 		request.GetDetails().Size(),
 		sizeLimitWarn,
 		sizeLimitError,
-		namespaceId.String(),
+		namespaceEntry.ID().String(),
 		taskToken.GetWorkflowId(),
 		taskToken.GetRunId(),
 		wh.metricsScope(ctx).WithTags(metrics.CommandTypeTag(enumspb.COMMAND_TYPE_UNSPECIFIED.String())),
@@ -1204,7 +1185,7 @@ func (wh *WorkflowHandler) RecordActivityTaskHeartbeat(ctx context.Context, requ
 			Identity:  request.Identity,
 		}
 		_, err = wh.historyClient.RespondActivityTaskFailed(ctx, &historyservice.RespondActivityTaskFailedRequest{
-			NamespaceId:   namespaceId.String(),
+			NamespaceId:   namespaceEntry.ID().String(),
 			FailedRequest: failRequest,
 		})
 		if err != nil {
@@ -1214,7 +1195,7 @@ func (wh *WorkflowHandler) RecordActivityTaskHeartbeat(ctx context.Context, requ
 	}
 
 	resp, err := wh.historyClient.RecordActivityTaskHeartbeat(ctx, &historyservice.RecordActivityTaskHeartbeatRequest{
-		NamespaceId:      namespaceId.String(),
+		NamespaceId:      namespaceEntry.ID().String(),
 		HeartbeatRequest: request,
 	})
 	if err != nil {
@@ -1339,12 +1320,7 @@ func (wh *WorkflowHandler) RespondActivityTaskCompleted(
 	if request == nil {
 		return nil, errRequestNotSet
 	}
-	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
-	if err != nil {
-		return nil, err
-	}
-	namespaceId := namespace.ID(taskToken.GetNamespaceId())
-	namespaceEntry, err := wh.namespaceRegistry.GetNamespaceByID(namespaceId)
+	taskToken, namespaceEntry, err := wh.getTaskTokenAndNamespace(request)
 	if err != nil {
 		return nil, err
 	}
@@ -1360,7 +1336,7 @@ func (wh *WorkflowHandler) RespondActivityTaskCompleted(
 		request.GetResult().Size(),
 		sizeLimitWarn,
 		sizeLimitError,
-		namespaceId.String(),
+		namespaceEntry.ID().String(),
 		taskToken.GetWorkflowId(),
 		taskToken.GetRunId(),
 		wh.metricsScope(ctx).WithTags(metrics.CommandTypeTag(enumspb.COMMAND_TYPE_UNSPECIFIED.String())),
@@ -1374,7 +1350,7 @@ func (wh *WorkflowHandler) RespondActivityTaskCompleted(
 			Identity:  request.Identity,
 		}
 		_, err = wh.historyClient.RespondActivityTaskFailed(ctx, &historyservice.RespondActivityTaskFailedRequest{
-			NamespaceId:   namespaceId.String(),
+			NamespaceId:   namespaceEntry.ID().String(),
 			FailedRequest: failRequest,
 		})
 		if err != nil {
@@ -1382,7 +1358,7 @@ func (wh *WorkflowHandler) RespondActivityTaskCompleted(
 		}
 	} else {
 		_, err = wh.historyClient.RespondActivityTaskCompleted(ctx, &historyservice.RespondActivityTaskCompletedRequest{
-			NamespaceId:     namespaceId.String(),
+			NamespaceId:     namespaceEntry.ID().String(),
 			CompleteRequest: request,
 		})
 		if err != nil {
@@ -1512,12 +1488,7 @@ func (wh *WorkflowHandler) RespondActivityTaskFailed(
 		return nil, errRequestNotSet
 	}
 
-	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
-	if err != nil {
-		return nil, err
-	}
-	namespaceID := namespace.ID(taskToken.GetNamespaceId())
-	namespaceEntry, err := wh.namespaceRegistry.GetNamespaceByID(namespaceID)
+	taskToken, namespaceEntry, err := wh.getTaskTokenAndNamespace(request)
 	if err != nil {
 		return nil, err
 	}
@@ -1540,7 +1511,7 @@ func (wh *WorkflowHandler) RespondActivityTaskFailed(
 			request.GetLastHeartbeatDetails().Size(),
 			sizeLimitWarn,
 			sizeLimitError,
-			namespaceID.String(),
+			namespaceEntry.ID().String(),
 			taskToken.GetWorkflowId(),
 			taskToken.GetRunId(),
 			wh.metricsScope(ctx).WithTags(metrics.CommandTypeTag(enumspb.COMMAND_TYPE_UNSPECIFIED.String())),
@@ -1559,7 +1530,7 @@ func (wh *WorkflowHandler) RespondActivityTaskFailed(
 		request.GetFailure().Size(),
 		sizeLimitWarn,
 		sizeLimitError,
-		namespaceID.String(),
+		namespaceEntry.ID().String(),
 		taskToken.GetWorkflowId(),
 		taskToken.GetRunId(),
 		wh.metricsScope(ctx).WithTags(metrics.CommandTypeTag(enumspb.COMMAND_TYPE_UNSPECIFIED.String())),
@@ -1574,7 +1545,7 @@ func (wh *WorkflowHandler) RespondActivityTaskFailed(
 	}
 
 	_, err = wh.historyClient.RespondActivityTaskFailed(ctx, &historyservice.RespondActivityTaskFailedRequest{
-		NamespaceId:   namespaceID.String(),
+		NamespaceId:   namespaceEntry.ID().String(),
 		FailedRequest: request,
 	})
 	if err != nil {
@@ -1710,12 +1681,7 @@ func (wh *WorkflowHandler) RespondActivityTaskCanceled(ctx context.Context, requ
 		return nil, errRequestNotSet
 	}
 
-	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
-	if err != nil {
-		return nil, err
-	}
-	namespaceID := namespace.ID(taskToken.GetNamespaceId())
-	namespaceEntry, err := wh.namespaceRegistry.GetNamespaceByID(namespaceID)
+	taskToken, namespaceEntry, err := wh.getTaskTokenAndNamespace(request)
 	if err != nil {
 		return nil, err
 	}
@@ -1731,7 +1697,7 @@ func (wh *WorkflowHandler) RespondActivityTaskCanceled(ctx context.Context, requ
 		request.GetDetails().Size(),
 		sizeLimitWarn,
 		sizeLimitError,
-		namespaceID.String(),
+		namespaceEntry.ID().String(),
 		taskToken.GetWorkflowId(),
 		taskToken.GetRunId(),
 		wh.metricsScope(ctx).WithTags(metrics.CommandTypeTag(enumspb.COMMAND_TYPE_UNSPECIFIED.String())),
@@ -4940,4 +4906,32 @@ func (wh *WorkflowHandler) unaliasUpdateScheduleRequestStartWorkflowSearchAttrib
 	newRequest := *request
 	newRequest.Schedule = &newSchedule
 	return &newRequest, nil
+}
+
+type namespacedRequestWithTaskToken interface {
+	GetTaskToken() []byte
+	GetNamespace() string
+}
+
+// getTaskTokenAndNamespace deserializes TaskToken bytes from request,
+// and also ensures that the token's namespace ID matches the Namespace
+// field of request if set.
+func (wh *WorkflowHandler) getTaskTokenAndNamespace(request namespacedRequestWithTaskToken) (*tokenspb.Task, *namespace.Namespace, error) {
+	taskToken, err := wh.tokenSerializer.Deserialize(request.GetTaskToken())
+	if err != nil {
+		return nil, nil, err
+	}
+	namespaceId := namespace.ID(taskToken.GetNamespaceId())
+	namespaceEntry, err := wh.namespaceRegistry.GetNamespaceByID(namespaceId)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// request.Namespace was not a required field up to v1.19.0, so checking only
+	// for equality could break existing applications.
+	if request.GetNamespace() != "" && namespaceEntry.Name().String() != request.GetNamespace() {
+		return nil, nil, serviceerror.NewFailedPrecondition("request namespace does not match task token")
+	}
+
+	return taskToken, namespaceEntry, nil
 }
