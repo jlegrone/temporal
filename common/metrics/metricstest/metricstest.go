@@ -75,7 +75,25 @@ func NewHandler(logger log.Logger) (*Handler, error) {
 		return nil, err
 	}
 
-	provider := sdkmetrics.NewMeterProvider(sdkmetrics.WithReader(exporter))
+	// Set any custom histogram bucket configuration.
+	var views []sdkmetrics.View
+	for _, u := range []string{metrics.Dimensionless, metrics.Bytes, metrics.Milliseconds} {
+		views = append(views, sdkmetrics.NewView(
+			sdkmetrics.Instrument{
+				Kind: sdkmetrics.InstrumentKindHistogram,
+				Unit: u,
+			},
+			sdkmetrics.Stream{
+				Aggregation: aggregation.ExplicitBucketHistogram{
+					Boundaries: clientConfig.PerUnitHistogramBoundaries[u],
+				},
+			},
+		))
+	}
+	provider := sdkmetrics.NewMeterProvider(
+		sdkmetrics.WithReader(exporter),
+		sdkmetrics.WithView(views...),
+	)
 	meter := provider.Meter("temporal")
 	clientConfig := metrics.ClientConfig{}
 	otelHandler := metrics.NewOtelMetricsHandler(logger, &otelProvider{meter: meter}, clientConfig)

@@ -29,8 +29,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric/instrument"
-	otelunit "go.opentelemetry.io/otel/metric/unit"
+	"go.opentelemetry.io/otel/metric"
 
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
@@ -73,7 +72,8 @@ func (omp *otelMetricsHandler) Counter(counter string) CounterIface {
 	}
 
 	return CounterFunc(func(i int64, t ...Tag) {
-		c.Add(context.Background(), i, tagsToAttributes(omp.tags, t, omp.excludeTags)...)
+		option := metric.WithAttributes(tagsToAttributes(omp.tags, t, omp.excludeTags)...)
+		c.Add(context.Background(), i, option)
 	})
 }
 
@@ -85,9 +85,11 @@ func (omp *otelMetricsHandler) Gauge(gauge string) GaugeIface {
 	}
 
 	return GaugeFunc(func(i float64, t ...Tag) {
-		err = omp.provider.GetMeter().RegisterCallback([]instrument.Asynchronous{c}, func(ctx context.Context) {
-			c.Observe(ctx, i, tagsToAttributes(omp.tags, t, omp.excludeTags)...)
-		})
+		_, err = omp.provider.GetMeter().RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+			option := metric.WithAttributes(tagsToAttributes(omp.tags, t, omp.excludeTags)...)
+			o.ObserveFloat64(c, i, option)
+			return nil
+		}, c)
 		if err != nil {
 			omp.l.Fatal("error setting callback metric update", tag.NewStringTag("MetricName", gauge), tag.Error(err))
 		}
@@ -96,25 +98,27 @@ func (omp *otelMetricsHandler) Gauge(gauge string) GaugeIface {
 
 // Timer obtains a timer for the given name and MetricOptions.
 func (omp *otelMetricsHandler) Timer(timer string) TimerIface {
-	c, err := omp.provider.GetMeter().SyncInt64().Histogram(timer, instrument.WithUnit(otelunit.Unit(Milliseconds)))
+	c, err := omp.provider.GetMeter().Int64Histogram(timer, metric.WithUnit(Milliseconds))
 	if err != nil {
 		omp.l.Fatal("error getting metric", tag.NewStringTag("MetricName", timer), tag.Error(err))
 	}
 
 	return TimerFunc(func(i time.Duration, t ...Tag) {
-		c.Record(context.Background(), i.Milliseconds(), tagsToAttributes(omp.tags, t, omp.excludeTags)...)
+		option := metric.WithAttributes(tagsToAttributes(omp.tags, t, omp.excludeTags)...)
+		c.Record(context.Background(), i.Milliseconds(), option)
 	})
 }
 
 // Histogram obtains a histogram for the given name and MetricOptions.
 func (omp *otelMetricsHandler) Histogram(histogram string, unit MetricUnit) HistogramIface {
-	c, err := omp.provider.GetMeter().SyncInt64().Histogram(histogram, instrument.WithUnit(otelunit.Unit(unit)))
+	c, err := omp.provider.GetMeter().Int64Histogram(histogram, metric.WithUnit(string(unit)))
 	if err != nil {
 		omp.l.Fatal("error getting metric", tag.NewStringTag("MetricName", histogram), tag.Error(err))
 	}
 
 	return CounterFunc(func(i int64, t ...Tag) {
-		c.Record(context.Background(), i, tagsToAttributes(omp.tags, t, omp.excludeTags)...)
+		option := metric.WithAttributes(tagsToAttributes(omp.tags, t, omp.excludeTags)...)
+		c.Record(context.Background(), i, option)
 	})
 }
 

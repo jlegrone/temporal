@@ -34,7 +34,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/metric/unit"
 	sdkmetrics "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/aggregation"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -66,34 +65,34 @@ func TestMeter(t *testing.T) {
 		sdkmetrics.WithView(
 			sdkmetrics.NewView(
 				sdkmetrics.Instrument{
-					Kind: sdkmetrics.InstrumentKindSyncHistogram,
-					Unit: unit.Bytes,
+					Kind: sdkmetrics.InstrumentKindHistogram,
+					Unit: "By",
 				},
 				sdkmetrics.Stream{
 					Aggregation: aggregation.ExplicitBucketHistogram{
-						Boundaries: defaultConfig.PerUnitHistogramBoundaries[string(unit.Bytes)],
+						Boundaries: defaultConfig.PerUnitHistogramBoundaries["By"],
 					},
 				},
 			),
 			sdkmetrics.NewView(
 				sdkmetrics.Instrument{
-					Kind: sdkmetrics.InstrumentKindSyncHistogram,
-					Unit: unit.Dimensionless,
+					Kind: sdkmetrics.InstrumentKindHistogram,
+					Unit: "1",
 				},
 				sdkmetrics.Stream{
 					Aggregation: aggregation.ExplicitBucketHistogram{
-						Boundaries: defaultConfig.PerUnitHistogramBoundaries[string(unit.Dimensionless)],
+						Boundaries: defaultConfig.PerUnitHistogramBoundaries["1"],
 					},
 				},
 			),
 			sdkmetrics.NewView(
 				sdkmetrics.Instrument{
-					Kind: sdkmetrics.InstrumentKindSyncHistogram,
-					Unit: unit.Milliseconds,
+					Kind: sdkmetrics.InstrumentKindHistogram,
+					Unit: "ms",
 				},
 				sdkmetrics.Stream{
 					Aggregation: aggregation.ExplicitBucketHistogram{
-						Boundaries: defaultConfig.PerUnitHistogramBoundaries[string(unit.Milliseconds)],
+						Boundaries: defaultConfig.PerUnitHistogramBoundaries["ms"],
 					},
 				},
 			),
@@ -102,7 +101,8 @@ func TestMeter(t *testing.T) {
 	p := NewOtelMetricsHandler(log.NewTestLogger(), &testProvider{meter: provider.Meter("test")}, defaultConfig)
 	recordMetrics(p)
 
-	got, err := rdr.Collect(ctx)
+	var got metricdata.ResourceMetrics
+	err := rdr.Collect(ctx, &got)
 	assert.Nil(t, err)
 
 	want := []metricdata.Metrics{
@@ -145,19 +145,19 @@ func TestMeter(t *testing.T) {
 		},
 		{
 			Name: "latency",
-			Data: metricdata.Histogram{
-				DataPoints: []metricdata.HistogramDataPoint{
+			Data: metricdata.Histogram[int64]{
+				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
 						Count:        2,
 						BucketCounts: []uint64{0, 0, 0, 1, 1, 0},
-						Min:          &minLatency,
-						Max:          &maxLatency,
+						Min:          metricdata.NewExtrema[int64](int64(minLatency)),
+						Max:          metricdata.NewExtrema[int64](int64(maxLatency)),
 						Sum:          6503,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
 			},
-			Unit: unit.Milliseconds,
+			Unit: "ms",
 		},
 		{
 			Name: "temp",
@@ -172,31 +172,38 @@ func TestMeter(t *testing.T) {
 		},
 		{
 			Name: "transmission",
-			Data: metricdata.Histogram{
-				DataPoints: []metricdata.HistogramDataPoint{
+			Data: metricdata.Histogram[int64]{
+				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
 						Count:        1,
 						BucketCounts: []uint64{0, 0, 1},
-						Min:          &testBytes,
-						Max:          &testBytes,
-						Sum:          testBytes,
+						Min:          metricdata.NewExtrema[int64](int64(testBytes)),
+						Max:          metricdata.NewExtrema[int64](int64(testBytes)),
+						Sum:          int64(testBytes),
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
 			},
-			Unit: unit.Bytes,
+			Unit: "By",
 		},
 	}
-	if diff := cmp.Diff(want, got.ScopeMetrics[0].Metrics, cmp.Comparer(valuesEqual),
+	if diff := cmp.Diff(want, got.ScopeMetrics[0].Metrics,
+		cmp.Comparer(func(e1, e2 metricdata.Extrema[int64]) bool {
+			v1, ok1 := e1.Value()
+			v2, ok2 := e2.Value()
+			return ok1 && ok2 && v1 == v2
+		}),
+		cmp.Comparer(func(a1, a2 attribute.Set) bool {
+			return a1.Equals(&a2)
+		}),
 		cmpopts.SortSlices(func(x, y metricdata.Metrics) bool {
 			return x.Name < y.Name
 		}),
-		// TODO: No good way to verify metrics tag in attributes as a private field in the attribute.Set.
-		cmpopts.IgnoreFields(metricdata.DataPoint[int64]{}, "Attributes", "StartTime", "Time"),
-		cmpopts.IgnoreFields(metricdata.DataPoint[float64]{}, "Attributes", "StartTime", "Time"),
-		cmpopts.IgnoreFields(metricdata.HistogramDataPoint{}, "Attributes", "StartTime", "Time", "Bounds"),
+		cmpopts.IgnoreFields(metricdata.DataPoint[int64]{}, "StartTime", "Time"),
+		cmpopts.IgnoreFields(metricdata.DataPoint[float64]{}, "StartTime", "Time"),
+		cmpopts.IgnoreFields(metricdata.HistogramDataPoint[int64]{}, "StartTime", "Time", "Bounds"),
 	); diff != "" {
-		t.Errorf("mismatch (-want, got):\n%s", diff)
+		t.Errorf("mismatch (-want, +got):\n%s", diff)
 	}
 }
 
